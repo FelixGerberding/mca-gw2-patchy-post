@@ -1,9 +1,45 @@
 #!/usr/bin/env node
-const { createCanvas, loadImage } = require("canvas");
+const { createCanvas, loadImage, registerFont } = require("canvas");
 const fs = require("fs");
 const path = require("path");
 
 const WINGMAN = "https://gw2wingman.nevermindcreations.de";
+
+// Every post so far was rendered on Windows, where 'Segoe UI' resolves. On
+// Linux it silently falls back to whatever sans-serif is installed and the
+// post comes out in the wrong typeface, so ship the font with the repo and
+// register it under a fixed family name.
+const FONT_FAMILY = "Patchy Sans";
+const fontDir = path.join(__dirname, "fonts");
+
+function registerFonts() {
+	const faces = [
+		{ file: "regular.ttf", weight: "normal", style: "normal" },
+		{ file: "bold.ttf", weight: "bold", style: "normal" },
+		{ file: "italic.ttf", weight: "normal", style: "italic" },
+	];
+
+	const found = faces.filter((face) =>
+		fs.existsSync(path.join(fontDir, face.file)),
+	);
+
+	if (!found.length) {
+		console.warn(
+			`No fonts in ${path.relative(process.cwd(), fontDir)}/ - falling back to` +
+				" the system sans-serif, which will not match previous posts.",
+		);
+		return false;
+	}
+
+	for (const face of found) {
+		registerFont(path.join(fontDir, face.file), {
+			family: FONT_FAMILY,
+			weight: face.weight,
+			style: face.style,
+		});
+	}
+	return true;
+}
 
 const scaleFactor = 2; // Resolution multiplier
 const width = 800 * scaleFactor;
@@ -36,6 +72,7 @@ function parseArgs(argv) {
 		era: null,
 		out: null,
 		refreshIcons: false,
+		ignoreSanity: false,
 	};
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
@@ -47,14 +84,19 @@ function parseArgs(argv) {
 			opts.out = argv[++i];
 		} else if (arg === "--refresh-icons") {
 			opts.refreshIcons = true;
+		} else if (arg === "--ignore-sanity") {
+			opts.ignoreSanity = true;
 		} else if (arg === "--help" || arg === "-h") {
 			console.log(
 				"Usage: node index.js [raid|strike] [--era <patch-id>] [--out <file.png>]\n" +
-					"                    [--refresh-icons]\n\n" +
+					"                    [--refresh-icons] [--ignore-sanity]\n\n" +
 					"  raid|strike       Encounter type to chart (default: raid)\n" +
-					"  --era             Wingman patch id, e.g. 26-07 (default: newest patch)\n" +
+					"  --era             latest (default), previous, or a wingman patch\n" +
+					"                    id such as 26-07. \"previous\" is the patch that\n" +
+					"                    just closed, i.e. the one with final standings.\n" +
 					"  --out             Output PNG path (default: <type>_patch_records.png)\n" +
-					"  --refresh-icons   Re-download team icons that are already cached",
+					"  --refresh-icons   Re-download team icons that are already cached\n" +
+					"  --ignore-sanity   Exit 0 even if the sanity checks fail",
 			);
 			process.exit(0);
 		} else {
@@ -113,6 +155,26 @@ function formatDuration(ms) {
 	const minutes = Math.floor(totalSeconds / 60);
 	const seconds = Math.floor(totalSeconds % 60);
 	return `${minutes}:${seconds < 10 ? "0" + seconds : seconds}`;
+}
+
+/**
+ * "latest" is the patch currently being played, "previous" is the one that
+ * just closed - which is the one a "Final Standings" post is about. Anything
+ * else is taken as a literal wingman patch id.
+ */
+async function resolveEra(era) {
+	const patches = await getPatches();
+	const live = patches.filter((patch) => patch.id !== "all");
+
+	if (!era || era === "latest" || era === "current") return live[0].id;
+	if (era === "previous") {
+		if (live.length < 2) throw new Error("No previous patch to report on");
+		return live[1].id;
+	}
+	if (!live.some((patch) => patch.id === era)) {
+		throw new Error(`Unknown patch era: ${era}`);
+	}
+	return era;
 }
 
 /**
@@ -232,6 +294,10 @@ async function processBoss(bossID, isChallengeMode, boss, era) {
 	try {
 		const currentData = await wingman(`/api/boss?bossID=${bossID}&era=${era}`);
 
+		// Wingman answers 200 with an {error} body when it holds nothing for
+		// this boss/era combination - a whole era can be missing this way.
+		if (currentData.error) return { noData: currentData.error };
+
 		// Not every encounter gets killed every patch (Freezie, for one).
 		if (!currentData.link_top || !currentData.duration_top) return null;
 
@@ -278,6 +344,7 @@ function processTeamData(bossEntry, teamDataMap) {
 async function collectRecord(bossID, isChallengeMode, boss, era) {
 	const data = await processBoss(bossID, isChallengeMode, boss, era);
 	if (!data) return null;
+	if (data.noData) return { noData: data.noData };
 
 	if (!data.isAllTime) return { data, alltime: null };
 
@@ -297,13 +364,20 @@ async function fetchTeamData(encounterType, era) {
 	const newAlltimeRecords = [];
 	const teamTableData = [];
 
+	let encounterCount = 0;
+	const noDataReasons = new Set();
 	for (const [bossID, boss] of bosses) {
 		const variants = [[bossID, false]];
 		if (boss.hasCM) variants.push([`-${bossID}`, true]);
+		encounterCount += variants.length;
 
 		for (const [id, isChallengeMode] of variants) {
 			const result = await collectRecord(id, isChallengeMode, boss, era);
 			if (!result) continue;
+			if (result.noData) {
+				noDataReasons.add(result.noData);
+				continue;
+			}
 
 			teamTableData.push(result.data);
 			processTeamData(result.data, teamDataMap);
@@ -327,7 +401,13 @@ async function fetchTeamData(encounterType, era) {
 		team.rank = rank;
 	});
 
-	return { teamData, newAlltimeRecords, teamTableData };
+	return {
+		teamData,
+		newAlltimeRecords,
+		teamTableData,
+		encounterCount,
+		noDataReasons: [...noDataReasons],
+	};
 }
 
 function markdownTable(teamTableData) {
@@ -458,7 +538,7 @@ async function createPatchRecordImage(
 	ctx.lineWidth = 4 * scaleFactor;
 	ctx.strokeRect(2, 2, width - 4, baseHeight - 4);
 
-	ctx.font = `bold ${titleFontSize}px 'Segoe UI', sans-serif`;
+	ctx.font = `bold ${titleFontSize}px '${FONT_FAMILY}', sans-serif`;
 	ctx.fillStyle = "#efbf04";
 	ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
 	ctx.shadowBlur = 8 * scaleFactor;
@@ -469,7 +549,7 @@ async function createPatchRecordImage(
 		titleY,
 	);
 
-	ctx.font = `italic ${subtitleFontSize}px 'Segoe UI', sans-serif`;
+	ctx.font = `italic ${subtitleFontSize}px '${FONT_FAMILY}', sans-serif`;
 	ctx.fillStyle = "#ffffff";
 	ctx.shadowBlur = 4 * scaleFactor;
 	const subtitleText = `${encounterType[0].toUpperCase() + encounterType.slice(1)}s • ${patch.name.replace(/Balance Patch /g, "")} Patch • Final Standings`;
@@ -504,7 +584,7 @@ async function createPatchRecordImage(
 		);
 		ctx.fill();
 
-		ctx.font = `bold ${24 * scaleFactor}px 'Segoe UI'`;
+		ctx.font = `bold ${24 * scaleFactor}px '${FONT_FAMILY}'`;
 		ctx.fillStyle = "#ffffff";
 		ctx.textAlign = "center";
 		ctx.fillText(
@@ -513,7 +593,7 @@ async function createPatchRecordImage(
 			currentY + 38 * scaleFactor,
 		);
 
-		ctx.font = `bold ${22 * scaleFactor}px 'Segoe UI'`;
+		ctx.font = `bold ${22 * scaleFactor}px '${FONT_FAMILY}'`;
 		ctx.fillStyle = "#ffffff";
 		ctx.textAlign = "left";
 		ctx.fillText(team.team, padding + 60 * scaleFactor, currentY + 35 * scaleFactor);
@@ -571,7 +651,7 @@ async function createPatchRecordImage(
 		);
 		ctx.fill();
 
-		ctx.font = `bold ${24 * scaleFactor}px 'Segoe UI'`;
+		ctx.font = `bold ${24 * scaleFactor}px '${FONT_FAMILY}'`;
 		ctx.fillStyle = "#ffffff";
 		ctx.textAlign = "center";
 		ctx.fillText(
@@ -580,7 +660,7 @@ async function createPatchRecordImage(
 			yPos + 38 * scaleFactor,
 		);
 
-		ctx.font = `bold ${18 * scaleFactor}px 'Segoe UI'`;
+		ctx.font = `bold ${18 * scaleFactor}px '${FONT_FAMILY}'`;
 		ctx.fillStyle = "#ffffff";
 		ctx.textAlign = "left";
 		const teamName =
@@ -637,7 +717,7 @@ async function createPatchRecordImage(
 	);
 	ctx.fill();
 
-	ctx.font = `bold ${24 * scaleFactor}px 'Segoe UI'`;
+	ctx.font = `bold ${24 * scaleFactor}px '${FONT_FAMILY}'`;
 	ctx.fillStyle = "#66ff66";
 	ctx.fillText(
 		"NEW ALLTIMES",
@@ -671,7 +751,7 @@ async function createPatchRecordImage(
 			);
 		}
 
-		ctx.font = `bold ${16 * scaleFactor}px 'Segoe UI'`;
+		ctx.font = `bold ${16 * scaleFactor}px '${FONT_FAMILY}'`;
 		ctx.fillStyle = "#ffffff";
 		ctx.fillText(
 			getCleanName(record.name, record.isChallengeMode),
@@ -679,7 +759,7 @@ async function createPatchRecordImage(
 			contentY + 15 * scaleFactor,
 		);
 
-		ctx.font = `${14 * scaleFactor}px 'Segoe UI'`;
+		ctx.font = `${14 * scaleFactor}px '${FONT_FAMILY}'`;
 		ctx.fillStyle = "#cccccc";
 		ctx.fillText(
 			`Time: ${record.time}`,
@@ -708,17 +788,80 @@ async function createPatchRecordImage(
 	fs.writeFileSync(outputPath, canvas.toBuffer("image/png"));
 }
 
+/**
+ * Cheap guards against publishing a broken post when wingman is having a bad
+ * day. Anything in the returned list means a human should look before this
+ * goes out.
+ */
+function sanityCheck({
+	teamData,
+	teamTableData,
+	encounterCount,
+	noDataReasons,
+	patch,
+	era,
+}) {
+	const problems = [];
+
+	if (!teamTableData.length) {
+		problems.push(
+			`No records at all for era ${era}` +
+				(noDataReasons.length
+					? ` - wingman says: ${noDataReasons.join("; ")}`
+					: ""),
+		);
+	} else if (teamTableData.length < encounterCount * 0.5) {
+		problems.push(
+			`Only ${teamTableData.length} of ${encounterCount} encounters have a` +
+				` record for era ${era} - wingman may be mid-outage`,
+		);
+	}
+
+	if (teamData.length < 3) {
+		problems.push(
+			`Only ${teamData.length} team(s) in the standings - the layout expects` +
+				" a top 3",
+		);
+	}
+
+	// "Final Standings" is a lie while the patch is still being played.
+	if (patch.until && new Date(patch.until) > new Date()) {
+		problems.push(
+			`Patch ${era} is still open (until ${patch.until}) - standings are not final`,
+		);
+	}
+
+	const noIcon = teamData.filter(
+		(team) => !fs.existsSync(teamIconFile(team.team)),
+	);
+	if (noIcon.length) {
+		problems.push(
+			`No team icon for: ${noIcon.map((team) => team.team).join(", ")}`,
+		);
+	}
+
+	return problems;
+}
+
 async function main() {
 	const opts = parseArgs(process.argv.slice(2));
-	const era = opts.era || (await getPatches())[0].id;
+	registerFonts();
+
+	const era = await resolveEra(opts.era);
+	const patch = (await getPatches()).find((entry) => entry.id === era);
 	const outputPath = opts.out || `${opts.encounterType}_patch_records.png`;
 
-	console.log(`Building ${opts.encounterType} patch records for era ${era}`);
-
-	const { teamData, newAlltimeRecords, teamTableData } = await fetchTeamData(
-		opts.encounterType,
-		era,
+	console.log(
+		`Building ${opts.encounterType} patch records for era ${era} (${patch.name})`,
 	);
+
+	const {
+		teamData,
+		newAlltimeRecords,
+		teamTableData,
+		encounterCount,
+		noDataReasons,
+	} = await fetchTeamData(opts.encounterType, era);
 
 	await downloadGroupIcons(teamData, opts.refreshIcons);
 
@@ -736,8 +879,27 @@ async function main() {
 		era,
 		outputPath,
 	);
-
 	console.log(`Image saved to: ${outputPath}`);
+
+	const problems = sanityCheck({
+		teamData,
+		teamTableData,
+		encounterCount,
+		noDataReasons,
+		patch,
+		era,
+	});
+
+	if (problems.length) {
+		console.warn("\nSanity checks failed:");
+		for (const problem of problems) console.warn(`  - ${problem}`);
+	} else {
+		console.log("\nSanity checks passed.");
+	}
+
+	// The image is always written so it can be eyeballed; the exit code is
+	// what an automated caller gates on.
+	if (problems.length && !opts.ignoreSanity) process.exitCode = 3;
 }
 
 main().catch((err) => {

@@ -27,9 +27,10 @@ node index.js [raid|strike] [--era <patch-id>] [--out <file.png>]
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `raid` / `strike` | `raid` | Which encounter type to chart |
-| `--era` | newest patch | Wingman patch id, e.g. `26-07` - use this to rebuild an old post |
+| `--era` | `latest` | `latest`, `previous`, or a wingman patch id such as `26-07`. `previous` is the patch that just closed - the one a "Final Standings" post is about |
 | `--out` | `<type>_patch_records.png` | Output path |
 | `--refresh-icons` | off | Re-download team icons that are already cached |
+| `--ignore-sanity` | off | Exit 0 even when the sanity checks fail |
 
 Alongside the image the script prints a markdown table of every boss, the team
 that holds it, the time, and a link to the log - handy for the forum/Discord
@@ -88,3 +89,33 @@ Two consequences worth knowing:
   resolution.
 - The `'Segoe UI'` font stack falls back to whatever sans-serif is installed,
   so output on Linux will not be pixel-identical to output on Windows.
+
+## Sanity checks
+
+The image is always written, but the exit code is what an automated caller
+should gate on: **0** clean, **3** something looks wrong and a human should
+look before this is published. It flags
+
+- no records at all for the era, quoting wingman's own error if it gave one
+- fewer than half the encounters having a record, which usually means wingman
+  is mid-outage rather than that nobody killed anything
+- fewer than three teams, since the layout is built around a top 3
+- the patch still being open, which makes "Final Standings" a lie
+- any team in the standings with no icon
+
+`--ignore-sanity` forces exit 0 if you want the post anyway.
+
+Worth knowing: wingman's coverage has holes. Era `26-04` answers every boss
+query with `{"error": "No information about this boss found."}` even though it
+is a real patch, so a run for it produces an empty image and exits 3.
+
+## Fonts
+
+The design asks for Segoe UI. That resolves on Windows, where every post so
+far was made, but on Linux canvas silently falls back to whatever sans-serif
+is installed and the post comes out in the wrong typeface.
+
+So the fonts ship with the repo. Drop `regular.ttf`, `bold.ttf` and
+`italic.ttf` into `fonts/` and they are registered as the family the renderer
+asks for. With `fonts/` empty the script warns and falls back, which is fine
+for a local test and not fine for anything published.

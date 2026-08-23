@@ -1,20 +1,29 @@
 # fonts
 
-Drop the three faces here and the renderer picks them up:
+| File | Face | Used for |
+| --- | --- | --- |
+| `regular.ttf` | Selawik Regular | record times in the alltimes column, subtitle |
+| `bold.ttf` | Selawik Bold | title, team names, ranks, boss names |
+| `italic.ttf` | *(none - see below)* | optional |
 
-| File | Used for |
-| --- | --- |
-| `regular.ttf` | record times in the alltimes column |
-| `bold.ttf` | title, team names, ranks, boss names |
-| `italic.ttf` | the subtitle line |
+The design was drawn in **Segoe UI**, which ships with Windows and is licensed
+with it - fine to use on your own machine, not fine to commit.
 
-The original design uses **Segoe UI**, which ships with Windows and is
-licensed with it - fine to copy off your own machine for your own use, not
-fine to commit to a public repo.
+Shipped here instead is **[Selawik](https://github.com/microsoft/Selawik)**,
+Microsoft's own open, metric-compatible substitute for Segoe UI, under the SIL
+Open Font License 1.1 (`OFL.txt`). Side by side with an old post the difference
+is hard to spot.
 
-**Selawik** is Microsoft's open, metric-compatible substitute for Segoe UI and
-is the safe choice if this repo ever goes public:
-https://github.com/microsoft/Selawik
+## The italic
 
-Whatever you pick, keep the three filenames above. Nothing else in the repo
-needs to change.
+Selawik has no italic face, and canvas does **not** synthesise one - asking for
+`italic` silently renders upright. The subtitle is italic in every post so far,
+so `fillTextOblique()` in `index.js` shears it by hand instead.
+
+If you drop a real `italic.ttf` in here it gets registered, but the subtitle
+still goes through the shear - remove that call if you want the true italic.
+
+## Using Segoe UI instead
+
+Copy `segoeui.ttf` and `segoeuib.ttf` off a Windows install to `regular.ttf`
+and `bold.ttf`. Everything else stays as it is. Keep them out of a public repo.

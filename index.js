@@ -143,6 +143,19 @@ function teamIconFile(team) {
 	return path.join(groupIconsPath, `${slug(team)}_icon.png`);
 }
 
+/**
+ * Selawik has no italic face and canvas will not synthesise one - asking for
+ * "italic" just renders upright - so slant it by hand. The shear is applied
+ * about the baseline origin so the text does not drift off its anchor.
+ */
+function fillTextOblique(ctx, text, x, y, slant = 0.21) {
+	ctx.save();
+	ctx.translate(x, y);
+	ctx.transform(1, 0, -slant, 1, 0, 0);
+	ctx.fillText(text, 0, 0);
+	ctx.restore();
+}
+
 function getCleanName(name, isChallengeMode) {
 	if (cleanNames[name]) {
 		return cleanNames[name];
@@ -553,7 +566,8 @@ async function createPatchRecordImage(
 	ctx.fillStyle = "#ffffff";
 	ctx.shadowBlur = 4 * scaleFactor;
 	const subtitleText = `${encounterType[0].toUpperCase() + encounterType.slice(1)}s • ${patch.name.replace(/Balance Patch /g, "")} Patch • Final Standings`;
-	ctx.fillText(
+	fillTextOblique(
+		ctx,
 		subtitleText,
 		width / 2 - ctx.measureText(subtitleText).width / 2,
 		titleY + subtitleFontSize + 10 * scaleFactor,

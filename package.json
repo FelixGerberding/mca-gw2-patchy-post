@@ -1,0 +1,17 @@
+{
+  "name": "patchy-post",
+  "version": "1.0.0",
+  "description": "Generates the GW2 patch records post image from gw2wingman data",
+  "main": "index.js",
+  "scripts": {
+    "raid": "node index.js raid",
+    "strike": "node index.js strike"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "canvas": "^3.2.3"
+  },
+  "allowScripts": {
+    "canvas@3.2.3": true
+  }
+}

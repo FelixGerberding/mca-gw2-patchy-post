@@ -3,3 +3,7 @@ node_modules/
 # Generated posts - regenerate with `npm run raid` / `npm run strike`
 raid_patch_records.png
 strike_patch_records.png
+
+# CDK
+infra/node_modules/
+infra/cdk.out/

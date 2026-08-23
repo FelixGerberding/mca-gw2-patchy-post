@@ -53,8 +53,11 @@ const padding = 24 * scaleFactor;
 const assetPath = (...parts) => path.join(__dirname, ...parts);
 const backgroundImagePath = assetPath("background.jpg");
 const cmBadgePath = assetPath("cm_badge.png");
-const bossIconsPath = assetPath("boss_icons");
-const groupIconsPath = assetPath("group_icons");
+// Overridable because Lambda's task root is read-only - the handler seeds a
+// copy under /tmp and points these at it so icon downloads still work.
+const bossIconsPath = process.env.PATCHY_BOSS_ICONS || assetPath("boss_icons");
+const groupIconsPath =
+	process.env.PATCHY_GROUP_ICONS || assetPath("group_icons");
 
 // Bosses whose full name is too long for the "new alltimes" column.
 const cleanNames = {
@@ -816,6 +819,7 @@ function sanityCheck({
 	era,
 }) {
 	const problems = [];
+	const warnings = [];
 
 	if (!teamTableData.length) {
 		problems.push(
@@ -845,16 +849,18 @@ function sanityCheck({
 		);
 	}
 
+	// Plenty of teams never upload a logo to wingman, so a missing icon is
+	// normal and cosmetic. Worth saying out loud, not worth holding the post.
 	const noIcon = teamData.filter(
 		(team) => !fs.existsSync(teamIconFile(team.team)),
 	);
 	if (noIcon.length) {
-		problems.push(
+		warnings.push(
 			`No team icon for: ${noIcon.map((team) => team.team).join(", ")}`,
 		);
 	}
 
-	return problems;
+	return { problems, warnings };
 }
 
 async function main() {
@@ -916,7 +922,21 @@ async function main() {
 	if (problems.length && !opts.ignoreSanity) process.exitCode = 3;
 }
 
-main().catch((err) => {
-	console.error(err.message);
-	process.exit(1);
-});
+module.exports = {
+	registerFonts,
+	getPatches,
+	resolveEra,
+	fetchTeamData,
+	downloadGroupIcons,
+	createPatchRecordImage,
+	markdownTable,
+	sanityCheck,
+};
+
+// Only run as a CLI; the Lambda handler imports the pieces above instead.
+if (require.main === module) {
+	main().catch((err) => {
+		console.error(err.message);
+		process.exit(1);
+	});
+}

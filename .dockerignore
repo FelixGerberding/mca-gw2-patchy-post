@@ -1,0 +1,7 @@
+node_modules
+.git
+infra
+docs
+*.md
+raid_patch_records.png
+strike_patch_records.png

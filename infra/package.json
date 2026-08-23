@@ -1,0 +1,18 @@
+{
+  "name": "patchy-post-infra",
+  "version": "1.0.0",
+  "private": true,
+  "bin": { "infra": "bin/infra.js" },
+  "scripts": {
+    "deploy": "cdk deploy",
+    "diff": "cdk diff",
+    "synth": "cdk synth"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.1000.0"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.4.2"
+  }
+}

@@ -5,10 +5,14 @@
   "main": "index.js",
   "scripts": {
     "raid": "node index.js raid",
-    "strike": "node index.js strike"
+    "strike": "node index.js strike",
+    "post": "node src/post.js",
+    "post:dry": "node src/post.js --dry-run"
   },
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1116.0",
+    "@aws-sdk/client-secrets-manager": "^3.1116.0",
     "canvas": "^3.2.3"
   },
   "allowScripts": {

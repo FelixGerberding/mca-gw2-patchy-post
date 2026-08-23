@@ -31,7 +31,12 @@ const cleanNames = {
 };
 
 function parseArgs(argv) {
-	const opts = { encounterType: "raid", era: null, out: null };
+	const opts = {
+		encounterType: "raid",
+		era: null,
+		out: null,
+		refreshIcons: false,
+	};
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "raid" || arg === "strike") {
@@ -40,12 +45,16 @@ function parseArgs(argv) {
 			opts.era = argv[++i];
 		} else if (arg === "--out") {
 			opts.out = argv[++i];
+		} else if (arg === "--refresh-icons") {
+			opts.refreshIcons = true;
 		} else if (arg === "--help" || arg === "-h") {
 			console.log(
-				"Usage: node index.js [raid|strike] [--era <patch-id>] [--out <file.png>]\n\n" +
-					"  raid|strike   Encounter type to chart (default: raid)\n" +
-					"  --era         Wingman patch id, e.g. 26-07 (default: newest patch)\n" +
-					"  --out         Output PNG path (default: <type>_patch_records.png)",
+				"Usage: node index.js [raid|strike] [--era <patch-id>] [--out <file.png>]\n" +
+					"                    [--refresh-icons]\n\n" +
+					"  raid|strike       Encounter type to chart (default: raid)\n" +
+					"  --era             Wingman patch id, e.g. 26-07 (default: newest patch)\n" +
+					"  --out             Output PNG path (default: <type>_patch_records.png)\n" +
+					"  --refresh-icons   Re-download team icons that are already cached",
 			);
 			process.exit(0);
 		} else {
@@ -159,6 +168,66 @@ async function downloadBossIcon(boss) {
 	}
 }
 
+function decodeHtml(text) {
+	return text
+		.replace(/&#0?39;|&#x27;/gi, "'")
+		.replace(/&quot;/g, '"')
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&amp;/g, "&");
+}
+
+/**
+ * Wingman hosts the team logos, but under arbitrary filenames - "Snow Crows"
+ * is served as SC.png, "My Chaotic Asylum" as MCA_LOGO_2.png. The group name
+ * only appears in the img title, so scrape it off one of the team's own
+ * record log pages and cache the result under our own slug.
+ */
+async function downloadGroupIcon(team, logLink, refresh) {
+	const filePath = teamIconFile(team);
+	if (!refresh && fs.existsSync(filePath)) return;
+
+	try {
+		const response = await fetch(`${WINGMAN}/log/${logLink}`);
+		if (!response.ok) {
+			throw new Error(`log page returned ${response.status}`);
+		}
+		const html = await response.text();
+
+		let iconFile = null;
+		for (const match of html.matchAll(
+			/groupIcons\/([^"]+)"[^>]*?title="([^"]*)"/g,
+		)) {
+			if (decodeHtml(match[2]) === team) {
+				iconFile = match[1];
+				break;
+			}
+		}
+
+		if (!iconFile) {
+			console.warn(`No wingman icon for "${team}"`);
+			return;
+		}
+
+		const icon = await fetch(`${WINGMAN}/static/groupIcons/${iconFile}`);
+		if (!icon.ok) {
+			throw new Error(`icon returned ${icon.status}`);
+		}
+
+		fs.mkdirSync(groupIconsPath, { recursive: true });
+		fs.writeFileSync(filePath, Buffer.from(await icon.arrayBuffer()));
+		console.log(`Fetched team icon for "${team}" (${iconFile})`);
+	} catch (err) {
+		console.warn(`Could not fetch team icon for "${team}": ${err.message}`);
+	}
+}
+
+async function downloadGroupIcons(teamData, refresh) {
+	for (const team of teamData) {
+		await downloadGroupIcon(team.team, team.logLink, refresh);
+	}
+}
+
 async function processBoss(bossID, isChallengeMode, boss, era) {
 	try {
 		const currentData = await wingman(`/api/boss?bossID=${bossID}&era=${era}`);
@@ -176,6 +245,7 @@ async function processBoss(bossID, isChallengeMode, boss, era) {
 			players: currentData.group_top?.[0] || "",
 			time: formatDuration(currentData.duration_top),
 			duration: currentData.duration_top,
+			link: currentData.link_top,
 			logUrl: `${WINGMAN}/log/${currentData.link_top}`,
 			isChallengeMode,
 			isAllTime: currentData.link_top === alltimeData.link_top,
@@ -191,7 +261,12 @@ function processTeamData(bossEntry, teamDataMap) {
 
 	const groupName = bossEntry.players;
 	if (!teamDataMap[groupName]) {
-		teamDataMap[groupName] = { team: groupName, bosses: [] };
+		// Any one of the team's logs will do to look their icon up later.
+		teamDataMap[groupName] = {
+			team: groupName,
+			logLink: bossEntry.link,
+			bosses: [],
+		};
 	}
 
 	teamDataMap[groupName].bosses.push({
@@ -644,6 +719,8 @@ async function main() {
 		opts.encounterType,
 		era,
 	);
+
+	await downloadGroupIcons(teamData, opts.refreshIcons);
 
 	console.log(`\n${markdownTable(teamTableData)}\n`);
 	console.log(
